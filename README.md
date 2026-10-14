@@ -37,8 +37,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 | 文件 | 内容 |
 |---|---|
-| `assets/subword.js` | 注入网页：把 `.ytp-caption-segment` 里的词包成可以点的 span；在 window 捕获阶段截下对词的点击，播放器收不到；暂停、高亮、把词和字幕交给 App；`__subwordResume()` 接着播放；`__subwordSelection()` 取长按选中的文字 |
-| `MainActivity` | WebView、释义卡片（放在词的上方或下方）、全屏播放、长按菜单、返回键 |
+| `assets/subword.js` | 注入网页：按下时按坐标算出落在字幕（`.ytp-caption-segment`）的哪个词上（YouTube 不停地重新生成字幕元素，控制层又盖在字幕上，所以不改字幕结构、不看点到的元素）；在 window 捕获阶段截下整个手势，播放器收不到；暂停、叠一个黄框高亮、把词和字幕交给 App；`__subwordResume()` 接着播放；`__subwordSelection()` 取长按选中的文字 |
+| `MainActivity` | WebView、释义小悬浮窗（贴在词的上方，放不下时下方）、全屏播放、长按菜单、返回键 |
 | `Ai` | 提示词（改自 LearningPack 的 `VocabAI`）、流式请求、解析「音标 / 意思 / 原形 / 其他」 |
 | `VocabDb` | SQLite：生词本 `vocab`（同一个词只记一条）、查词记录 `lookups`；导出 jsonl |
 | `VocabActivity`、`SettingsActivity` | 生词本、AI 设置 |

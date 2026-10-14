@@ -26,7 +26,6 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -63,7 +62,7 @@ public class MainActivity extends Activity {
     private FrameLayout root, fullscreen;
     private ProgressBar progress;
     private TextView wordView, phoneticView, meaningView, formView, noteView, translationView, statusView;
-    private Button addButton, translateButton;
+    private TextView addButton, translateButton;
     private TextToSpeech tts;
     private boolean ttsReady;
     private String script;
@@ -243,11 +242,13 @@ public class MainActivity extends Activity {
         translationView.setText("");
         translateButton.setVisibility(l.passage || l.sentence.isEmpty() ? View.GONE : View.VISIBLE);
         translateButton.setEnabled(true);
+        translateButton.setAlpha(1f);
         addButton.setVisibility(l.passage ? View.GONE : View.VISIBLE);
 
         int count = l.passage ? 0 : VocabDb.get(this).recordLookup(l.word, l.sentence, l.url, l.time);
         VocabDb.Entry saved = l.passage ? null : VocabDb.get(this).find(l.word);
         statusView.setText(count > 1 ? "第 " + count + " 次查这个词" : "");
+        statusView.setVisibility(count > 1 ? View.VISIBLE : View.GONE);
         updateAddButton(saved != null);
 
         scrim.setVisibility(View.VISIBLE);
@@ -336,6 +337,7 @@ public class MainActivity extends Activity {
         Lookup l = current;
         if (l == null) return;
         translateButton.setEnabled(false);
+        translateButton.setAlpha(0.4f);
         translationView.setVisibility(View.VISIBLE);
         translationView.setText("…");
         int gen = generation;
@@ -385,7 +387,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateAddButton(boolean added) {
-        addButton.setText(added ? "已加入 ✓" : "加入生词本");
+        addButton.setText(added ? "✓生词" : "＋生词");
     }
 
     private void speak() {
@@ -410,49 +412,47 @@ public class MainActivity extends Activity {
         web.evaluateJavascript("window.__subwordResume && window.__subwordResume()", null);
     }
 
-    /** 卡片放在词的上方（词在屏幕下半）或下方（词在上半），左右以词为中心 */
+    /**
+     * 悬浮窗贴在词的上方：底边对准词，释义逐字出来时往上长，不会盖住词。上方放不下时放在词的下方。
+     * 左右以词为中心，不出屏幕
+     */
     private void positionCard(Lookup l) {
         View page = customView != null ? fullscreen : web;
         int[] pageLoc = new int[2], rootLoc = new int[2];
         page.getLocationInWindow(pageLoc);
         root.getLocationInWindow(rootLoc);
+        // 网页里的 CSS 像素换算到屏幕像素；位置换算到 root 的内容区（去掉 root 的内边距）
         float scale = l.vw > 0 ? page.getWidth() / l.vw : getResources().getDisplayMetrics().density;
-        float wordTop = pageLoc[1] - rootLoc[1] + l.y * scale;
+        float offsetX = pageLoc[0] - rootLoc[0] - root.getPaddingLeft();
+        float offsetY = pageLoc[1] - rootLoc[1] - root.getPaddingTop();
+        float wordTop = offsetY + l.y * scale;
         float wordBottom = wordTop + l.h * scale;
-        float wordCenterX = pageLoc[0] - rootLoc[0] + (l.x + l.w / 2) * scale;
+        float wordCenterX = offsetX + (l.x + l.w / 2) * scale;
 
         float dp = getResources().getDisplayMetrics().density;
         int rootW = root.getWidth() - root.getPaddingLeft() - root.getPaddingRight();
         int rootH = root.getHeight() - root.getPaddingTop() - root.getPaddingBottom();
-        int cardW = (int) Math.min(rootW - 16 * dp, 460 * dp);
-        int margin = (int) (8 * dp);
+        int cardW = (int) Math.min(rootW - 16 * dp, 300 * dp);
+        int edge = (int) (8 * dp), gap = (int) (6 * dp);
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(cardW, FrameLayout.LayoutParams.WRAP_CONTENT);
-        p.leftMargin = (int) Math.max(margin, Math.min(wordCenterX - cardW / 2f - root.getPaddingLeft(), rootW - cardW - margin));
-        boolean above = (wordTop + wordBottom) / 2 > rootH / 2f;
+        p.leftMargin = (int) Math.max(edge, Math.min(wordCenterX - cardW / 2f, rootW - cardW - edge));
+        // 上方至少要能放下标题行加两三行释义
+        boolean above = wordTop - gap - edge >= 130 * dp || wordTop > rootH - wordBottom;
         if (above) {
             p.gravity = Gravity.BOTTOM | Gravity.START;
-            p.bottomMargin = (int) Math.max(margin, rootH - (wordTop - root.getPaddingTop()) + margin);
+            p.bottomMargin = (int) Math.max(edge, rootH - wordTop + gap);
         } else {
             p.gravity = Gravity.TOP | Gravity.START;
-            p.topMargin = (int) Math.max(margin, wordBottom - root.getPaddingTop() + margin);
+            p.topMargin = (int) Math.max(edge, wordBottom + gap);
         }
         card.setLayoutParams(p);
-        // 放不下（卡片超出屏幕）时改为贴着屏幕上沿或下沿
-        card.post(() -> {
-            if (card.getTop() < 0 || card.getBottom() > root.getHeight()) {
-                FrameLayout.LayoutParams q = (FrameLayout.LayoutParams) card.getLayoutParams();
-                q.gravity = (above ? Gravity.TOP : Gravity.BOTTOM) | Gravity.START;
-                q.topMargin = q.bottomMargin = margin;
-                card.setLayoutParams(q);
-            }
-        });
     }
 
     private void styleCard() {
         boolean night = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(night ? Color.rgb(40, 40, 44) : Color.WHITE);
-        bg.setCornerRadius(16 * getResources().getDisplayMetrics().density);
+        bg.setCornerRadius(12 * getResources().getDisplayMetrics().density);
         card.setBackground(bg);
         int text = night ? Color.rgb(235, 235, 235) : Color.rgb(25, 25, 25);
         for (TextView t : new TextView[]{wordView, phoneticView, meaningView, formView, noteView, translationView, statusView}) {

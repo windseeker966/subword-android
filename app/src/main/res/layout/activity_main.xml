@@ -90,13 +90,17 @@
         android:clickable="true"
         android:visibility="gone" />
 
+    <!-- 释义小悬浮窗：贴在点的词上方（放不下时下方） -->
     <LinearLayout
         android:id="@+id/card"
-        android:layout_width="wrap_content"
+        android:layout_width="300dp"
         android:layout_height="wrap_content"
-        android:elevation="12dp"
+        android:elevation="10dp"
         android:orientation="vertical"
-        android:padding="16dp"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="10dp"
         android:visibility="gone">
 
         <LinearLayout
@@ -109,87 +113,85 @@
                 android:id="@+id/word"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="22sp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:maxWidth="150dp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/phonetic"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
+                android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:alpha="0.7"
-                android:textSize="15sp" />
+                android:alpha="0.65"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="13sp" />
 
-            <Button
+            <TextView
                 android:id="@+id/speak"
-                style="?android:attr/borderlessButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:minWidth="40dp"
-                android:text="朗读" />
+                style="@style/CardAction"
+                android:contentDescription="朗读"
+                android:text="🔊" />
+
+            <TextView
+                android:id="@+id/translate"
+                style="@style/CardAction"
+                android:contentDescription="翻译整句"
+                android:text="整句" />
+
+            <TextView
+                android:id="@+id/add"
+                style="@style/CardAction"
+                android:contentDescription="加入生词本"
+                android:text="＋生词" />
         </LinearLayout>
 
         <TextView
             android:id="@+id/meaning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textSize="17sp" />
+            android:layout_marginEnd="6dp"
+            android:textSize="15sp" />
 
         <TextView
             android:id="@+id/form"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:alpha="0.75"
-            android:textSize="14sp"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="6dp"
+            android:alpha="0.7"
+            android:textSize="13sp"
             android:visibility="gone" />
 
         <TextView
             android:id="@+id/note"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:alpha="0.75"
-            android:textSize="14sp"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="6dp"
+            android:alpha="0.7"
+            android:textSize="13sp"
             android:visibility="gone" />
 
         <TextView
             android:id="@+id/translation"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:textSize="15sp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="6dp"
+            android:textSize="14sp"
             android:visibility="gone" />
 
-        <LinearLayout
+        <TextView
+            android:id="@+id/status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/status"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:alpha="0.6"
-                android:textSize="13sp" />
-
-            <Button
-                android:id="@+id/translate"
-                style="?android:attr/borderlessButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:text="翻译整句" />
-
-            <Button
-                android:id="@+id/add"
-                android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:text="加入生词本" />
-        </LinearLayout>
+            android:layout_marginTop="2dp"
+            android:alpha="0.55"
+            android:textSize="12sp"
+            android:visibility="gone" />
     </LinearLayout>
 </FrameLayout>

@@ -1,4 +1,4 @@
-// 注入 m.youtube.com：把画面上字幕里的英文词变成可以点的。点一个词：暂停视频、高亮这个词，
+// 注入 m.youtube.com：画面上字幕里的英文词可以点。点一个词：暂停视频、高亮这个词，
 // 把词、整行字幕、前一行字幕和词的位置交给 App（SubWordBridge.lookup）。App 收起释义时调 __subwordResume()。
 // YouTube 是单页应用，页面里切换视频不会重新加载，所以只注入一次（重复注入直接返回）。
 (function () {
@@ -6,13 +6,6 @@
   window.__subwordInstalled = true;
 
   var SEGMENT = '.ytp-caption-segment';
-
-  var style = document.createElement('style');
-  style.textContent =
-    SEGMENT + '{pointer-events:auto !important;-webkit-user-select:none;user-select:none}' +
-    '.sw-w{pointer-events:auto !important;border-radius:3px}' +
-    '.sw-w.sw-on{background:#FFD54F !important;color:#000 !important}';
-  (document.head || document.documentElement).appendChild(style);
 
   // 最近几行字幕，给 AI 当上下文。自动生成的字幕是一个词一个词往外冒的，
   // 新的一行以上一行开头时只是同一行在变长，替换掉而不是另记一行
@@ -37,51 +30,50 @@
     return clean(parts.join(' '));
   }
 
-  // 把一段字幕的文字拆成「词」和「词之间的东西」，词包在 span.sw-w 里。文字不变，YouTube 换字幕时会整个改掉
+  setInterval(function () { remember(currentLine()); }, 200);
+
+  // 手指落在字幕的哪个词上。YouTube 每隔几百毫秒就把字幕元素整个重新生成一遍（全屏时暂停着也会），
+  // 所以不改字幕的结构，按下时现算每个词的位置。落在字幕框里但在两个词之间时，取最近的词；
+  // 落在字幕框外返回 null
   var WORD = /[A-Za-z0-9][A-Za-z0-9'’\-]*/g;
-  function wrap(seg) {
-    var text = seg.textContent;
-    if (seg.__swText === text && seg.querySelector('.sw-w')) return;
-    var frag = document.createDocumentFragment();
-    var last = 0, m;
-    WORD.lastIndex = 0;
-    while ((m = WORD.exec(text))) {
-      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-      var span = document.createElement('span');
-      span.className = 'sw-w';
-      span.textContent = m[0];
-      frag.appendChild(span);
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    seg.textContent = '';
-    seg.appendChild(frag);
-    seg.__swText = text;
-  }
-
-  // 每 150 毫秒看一次字幕：比监听整个页面的改动省事，YouTube 页面改动很频繁
-  setInterval(function () {
-    var segs = document.querySelectorAll(SEGMENT);
-    if (!segs.length) return;
-    segs.forEach(wrap);
-    remember(currentLine());
-  }, 150);
-
-  // 点到字幕里的词：手机版播放器的控制层（进度条）盖在字幕上面，点下去的目标是控制层而不是字幕，
-  // 所以按坐标找落在哪个词上。在 window 的捕获阶段就截下来，播放器收不到，不会拖进度条、显示控制条或暂停
-  var start = null, lastLookup = 0;
+  var PAD = 8;
   function wordAt(x, y) {
-    var words = document.querySelectorAll('.sw-w');
-    for (var i = 0; i < words.length; i++) {
-      var r = words[i].getBoundingClientRect();
-      if (r.width && x >= r.left - 3 && x <= r.right + 3 && y >= r.top - 4 && y <= r.bottom + 4) return words[i];
+    var segs = document.querySelectorAll(SEGMENT), best = null, bestDist = Infinity;
+    for (var i = 0; i < segs.length; i++) {
+      var box = segs[i].getBoundingClientRect();
+      if (!box.width || x < box.left - PAD || x > box.right + PAD || y < box.top - PAD || y > box.bottom + PAD) continue;
+      var walker = document.createTreeWalker(segs[i], NodeFilter.SHOW_TEXT), node;
+      while ((node = walker.nextNode())) {
+        var m;
+        WORD.lastIndex = 0;
+        while ((m = WORD.exec(node.data))) {
+          var range = document.createRange();
+          range.setStart(node, m.index);
+          range.setEnd(node, m.index + m[0].length);
+          var rects = range.getClientRects();
+          for (var k = 0; k < rects.length; k++) {
+            var r = rects[k];
+            var dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+            var dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+            var d = dx * dx + dy * dy * 4;   // 上下偏一点比左右偏一点更可能是另一行
+            if (d < bestDist) {
+              bestDist = d;
+              best = { text: m[0], rect: { left: r.left, top: r.top, width: r.width, height: r.height } };
+            }
+          }
+        }
+      }
     }
-    return null;
+    return best;
   }
   function point(e) {
     var t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
     return { x: t.clientX, y: t.clientY };
   }
+
+  // 点到字幕：在 window 的捕获阶段截下整个手势，播放器收不到，不会拖进度条、显示控制条或暂停。
+  // 手机版播放器的控制层盖在字幕上面，所以按坐标判断，不看点到的是哪个元素
+  var start = null, lastLookup = 0;
 
   window.addEventListener('touchstart', function (e) {
     start = null;
@@ -101,13 +93,14 @@
       if (type !== 'touchend') { if (type === 'touchcancel') start = null; return; }
       var p = point(e), s = start;
       start = null;
-      if (Math.abs(p.x - s.x) < 12 && Math.abs(p.y - s.y) < 12) lookup(s.w);
+      if (Math.abs(p.x - s.x) < 16 && Math.abs(p.y - s.y) < 16) lookup(s.w);
     }, { capture: true, passive: false });
   });
 
   ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(function (type) {
     window.addEventListener(type, function (e) {
-      // 触摸时 touchstart 已经认出了词；鼠标或触控笔没有 touch 事件，按坐标找
+      // 触摸时 touchstart 已经认出了词（pointerdown 比 touchstart 先到，也按坐标判断）；
+      // 鼠标或触控笔没有 touch 事件，在 click 时查词
       var w = start ? start.w : wordAt(e.clientX, e.clientY);
       if (!w) return;
       e.stopImmediatePropagation();
@@ -116,6 +109,21 @@
     }, { capture: true, passive: false });
   });
 
+  // 高亮：叠在词上的半透明黄框，字幕元素被重新生成也不会丢。全屏时要放进全屏的元素里才看得到
+  var mark = null;
+  function highlight(r) {
+    unhighlight();
+    mark = document.createElement('div');
+    mark.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;border-radius:4px;' +
+      'background:rgba(255,213,79,0.45);box-shadow:0 0 0 2px #FFD54F;' +
+      'left:' + (r.left - 2) + 'px;top:' + (r.top - 1) + 'px;width:' + (r.width + 4) + 'px;height:' + (r.height + 2) + 'px';
+    (document.fullscreenElement || document.body).appendChild(mark);
+  }
+  function unhighlight() {
+    if (mark && mark.parentNode) mark.parentNode.removeChild(mark);
+    mark = null;
+  }
+
   var resumeVideo = null;
 
   function lookup(w) {
@@ -123,8 +131,7 @@
     var video = document.querySelector('video');
     if (!resumeVideo && video && !video.paused) resumeVideo = video;
     if (video) video.pause();
-    document.querySelectorAll('.sw-on').forEach(function (x) { x.classList.remove('sw-on'); });
-    w.classList.add('sw-on');
+    highlight(w.rect);
 
     var line = currentLine();
     var prev = '';
@@ -132,9 +139,9 @@
       var h = history[i];
       if (h && h !== line && line.indexOf(h) !== 0 && h.indexOf(line) !== 0) { prev = h; break; }
     }
-    var r = w.getBoundingClientRect();
+    var r = w.rect;
     SubWordBridge.lookup(JSON.stringify({
-      word: w.textContent,
+      word: w.text,
       sentence: line,
       previous: prev,
       time: video ? Math.floor(video.currentTime) : 0,
@@ -147,7 +154,7 @@
 
   // App 收起释义后调用：去掉高亮；点词前在播放的，接着播放
   window.__subwordResume = function () {
-    document.querySelectorAll('.sw-on').forEach(function (x) { x.classList.remove('sw-on'); });
+    unhighlight();
     var v = resumeVideo;
     resumeVideo = null;
     if (v) v.play();
