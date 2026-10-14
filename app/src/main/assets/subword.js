@@ -67,36 +67,52 @@
     remember(currentLine());
   }, 150);
 
-  // 点到字幕里的词：在 window 的捕获阶段就截下来，播放器收不到，不会当成「点视频」去暂停或显示控制条
+  // 点到字幕里的词：手机版播放器的控制层（进度条）盖在字幕上面，点下去的目标是控制层而不是字幕，
+  // 所以按坐标找落在哪个词上。在 window 的捕获阶段就截下来，播放器收不到，不会拖进度条、显示控制条或暂停
   var start = null, lastLookup = 0;
-  function wordAt(e) { return e.target && e.target.closest ? e.target.closest('.sw-w') : null; }
+  function wordAt(x, y) {
+    var words = document.querySelectorAll('.sw-w');
+    for (var i = 0; i < words.length; i++) {
+      var r = words[i].getBoundingClientRect();
+      if (r.width && x >= r.left - 3 && x <= r.right + 3 && y >= r.top - 4 && y <= r.bottom + 4) return words[i];
+    }
+    return null;
+  }
+  function point(e) {
+    var t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+    return { x: t.clientX, y: t.clientY };
+  }
 
   window.addEventListener('touchstart', function (e) {
-    var w = wordAt(e);
-    if (!w) { start = null; return; }
-    var t = e.touches[0];
-    start = { w: w, x: t.clientX, y: t.clientY };
-    e.stopImmediatePropagation();
-  }, { capture: true, passive: true });
-
-  window.addEventListener('touchend', function (e) {
-    var w = wordAt(e);
-    if (!w) return;
-    e.stopImmediatePropagation();
-    if (e.cancelable) e.preventDefault();   // 不再生成 click，播放器不会再收到一次
-    var t = e.changedTouches[0];
-    if (start && start.w === w && Math.abs(t.clientX - start.x) < 12 && Math.abs(t.clientY - start.y) < 12) lookup(w);
     start = null;
+    if (e.touches.length !== 1) return;
+    var p = point(e), w = wordAt(p.x, p.y);
+    if (!w) return;
+    start = { w: w, x: p.x, y: p.y };
+    e.stopImmediatePropagation();
+    if (e.cancelable) e.preventDefault();
   }, { capture: true, passive: false });
 
-  ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(function (type) {
+  ['touchmove', 'touchend', 'touchcancel'].forEach(function (type) {
     window.addEventListener(type, function (e) {
-      var w = wordAt(e);
+      if (!start) return;
+      e.stopImmediatePropagation();
+      if (e.cancelable) e.preventDefault();   // 不再生成 click，播放器不会再收到一次
+      if (type !== 'touchend') { if (type === 'touchcancel') start = null; return; }
+      var p = point(e), s = start;
+      start = null;
+      if (Math.abs(p.x - s.x) < 12 && Math.abs(p.y - s.y) < 12) lookup(s.w);
+    }, { capture: true, passive: false });
+  });
+
+  ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(function (type) {
+    window.addEventListener(type, function (e) {
+      // 触摸时 touchstart 已经认出了词；鼠标或触控笔没有 touch 事件，按坐标找
+      var w = start ? start.w : wordAt(e.clientX, e.clientY);
       if (!w) return;
       e.stopImmediatePropagation();
-      if (e.cancelable && type !== 'pointerdown') e.preventDefault();
-      // 鼠标或触控笔（没有 touch 事件）的点击
-      if (type === 'click' && Date.now() - lastLookup > 600) lookup(w);
+      if (e.cancelable && type !== 'pointerdown' && type !== 'pointermove') e.preventDefault();
+      if (type === 'click' && !start && Date.now() - lastLookup > 600) lookup(w);
     }, { capture: true, passive: false });
   });
 

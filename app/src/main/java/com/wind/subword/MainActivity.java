@@ -257,7 +257,7 @@ public class MainActivity extends Activity {
         if (l.passage) {
             translationView.setVisibility(View.VISIBLE);
             translationView.setText("…");
-            request(Ai.TRANSLATE_SYSTEM, Ai.translateUser(l.word, ""), 400, text -> translationView.setText(text), null);
+            request(Ai.TRANSLATE_SYSTEM, Ai.translateUser(l.word, ""), 4000, text -> translationView.setText(text), null);
             return;
         }
         String cacheKey = VocabDb.key(l.word) + "|" + l.sentence;
@@ -276,7 +276,7 @@ public class MainActivity extends Activity {
             return;
         }
         l.loading = true;
-        request(Ai.MEANING_SYSTEM, Ai.meaningUser(l.word, l.sentence, l.previous), 300, text -> {
+        request(Ai.MEANING_SYSTEM, Ai.meaningUser(l.word, l.sentence, l.previous), 4000, text -> {
             l.meaning = Ai.Meaning.parse(text);
             showMeaning(l.meaning);
         }, text -> {
@@ -340,7 +340,7 @@ public class MainActivity extends Activity {
         translationView.setText("…");
         int gen = generation;
         worker.execute(() -> Ai.stream(this, Ai.TRANSLATE_SYSTEM,
-                Ai.translateUser(l.sentence, l.previous), 400, new Ai.Listener() {
+                Ai.translateUser(l.sentence, l.previous), 4000, new Ai.Listener() {
                     @Override public void onText(String soFar) {
                         main.post(() -> { if (gen == generation) translationView.setText(soFar); });
                     }

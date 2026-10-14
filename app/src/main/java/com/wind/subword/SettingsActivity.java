@@ -92,7 +92,7 @@ public class SettingsActivity extends Activity {
         result.setText("测试中…");
         Handler main = new Handler(Looper.getMainLooper());
         new Thread(() -> Ai.stream(this, Ai.MEANING_SYSTEM,
-                Ai.meaningUser("figure", "i still can't figure out why he left", ""), 300, new Ai.Listener() {
+                Ai.meaningUser("figure", "i still can't figure out why he left", ""), 4000, new Ai.Listener() {
                     @Override public void onText(String soFar) { main.post(() -> result.setText(soFar)); }
                     @Override public void onDone(String text) { main.post(() -> result.setText("成功：\n" + text)); }
                     @Override public void onError(String message) { main.post(() -> result.setText(message)); }

@@ -100,12 +100,20 @@ final class Ai {
 
     /** 在当前线程里同步请求（调用方放到后台线程）。cancelled 返回 true 时尽早停下 */
     static void stream(Context c, String system, String user, int maxTokens, Listener l, java.util.function.BooleanSupplier cancelled) {
+        // 查词要快：关掉思考（deepseek-flash 默认先思考，慢一倍，思考还计在 max_tokens 里）。
+        // 不认识 thinking 参数的接口（返回 400）去掉它再请求一次
+        if (!stream(c, system, user, maxTokens, true, l, cancelled)) stream(c, system, user, maxTokens, false, l, cancelled);
+    }
+
+    /** 返回 false：接口不接受关掉思考的参数，还没有通知 Listener */
+    private static boolean stream(Context c, String system, String user, int maxTokens, boolean noThinking,
+                                  Listener l, java.util.function.BooleanSupplier cancelled) {
         SharedPreferences p = prefs(c);
         String proto = p.getString(KEY_PROTO, DEFAULT_PROTO);
         String base = p.getString(KEY_BASE, DEFAULT_BASE).trim();
         String model = p.getString(KEY_MODEL, DEFAULT_MODEL).trim();
         String key = p.getString(KEY_API_KEY, "").trim();
-        if (key.isEmpty()) { l.onError("还没有设置 API Key：右上角「设置」里填写"); return; }
+        if (key.isEmpty()) { l.onError("还没有设置 API Key：右上角「设置」里填写"); return true; }
         boolean anthropic = PROTO_ANTHROPIC.equals(proto);
         HttpURLConnection conn = null;
         try {
@@ -126,6 +134,7 @@ final class Ai {
                 conn.setRequestProperty("x-api-key", key);
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 body.put("system", system);
+                if (noThinking) body.put("thinking", new JSONObject().put("type", "disabled"));
             } else {
                 conn.setRequestProperty("Authorization", "Bearer " + key);
                 messages.put(new JSONObject().put("role", "system").put("content", system));
@@ -137,31 +146,51 @@ final class Ai {
             }
             int code = conn.getResponseCode();
             if (code / 100 != 2) {
-                l.onError("请求失败（HTTP " + code + "）：" + shorten(readAll(conn.getErrorStream())));
-                return;
+                String error = readAll(conn.getErrorStream());
+                if (anthropic && noThinking && code == 400 && error.contains("thinking")) return false;
+                l.onError("请求失败（HTTP " + code + "）：" + shorten(error));
+                return true;
             }
+            String stop = null;
             StringBuilder text = new StringBuilder();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) {
-                    if (cancelled.getAsBoolean()) return;
+                    if (cancelled.getAsBoolean()) return true;
                     if (!line.startsWith("data:")) continue;
                     String data = line.substring(5).trim();
                     if (data.isEmpty() || data.equals("[DONE]")) continue;
-                    String delta = delta(new JSONObject(data), anthropic);
+                    JSONObject event = new JSONObject(data);
+                    String reason = stopReason(event, anthropic);
+                    if (reason != null) stop = reason;
+                    String delta = delta(event, anthropic);
                     if (delta != null && !delta.isEmpty()) {
                         text.append(delta);
                         l.onText(text.toString());
                     }
                 }
             }
-            if (text.length() == 0) l.onError("AI 没有返回内容");
-            else l.onDone(text.toString());
+            if (text.length() == 0) {
+                l.onError("AI 没有返回内容" + (stop == null ? "" : "（结束原因：" + stop + "）"));
+            } else {
+                l.onDone(text.toString());
+            }
         } catch (Exception e) {
             if (!cancelled.getAsBoolean()) l.onError("请求失败：" + e.getMessage());
         } finally {
             if (conn != null) conn.disconnect();
         }
+        return true;
+    }
+
+    private static String stopReason(JSONObject o, boolean anthropic) {
+        if (anthropic) {
+            JSONObject d = o.optJSONObject("delta");
+            return "message_delta".equals(o.optString("type")) && d != null && !d.isNull("stop_reason") ? d.optString("stop_reason") : null;
+        }
+        JSONArray choices = o.optJSONArray("choices");
+        JSONObject first = choices == null ? null : choices.optJSONObject(0);
+        return first == null || first.isNull("finish_reason") ? null : first.optString("finish_reason");
     }
 
     private static String delta(JSONObject o, boolean anthropic) {
