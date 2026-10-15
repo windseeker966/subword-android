@@ -16,6 +16,7 @@ import android.speech.tts.TextToSpeech;
 import android.view.ActionMode;
 import android.view.Gravity;
 import android.view.Menu;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
@@ -72,6 +73,8 @@ public class MainActivity extends Activity {
 
     /** 卡片上显示的这次查词 */
     private Lookup current;
+    /** 透明层上按下的位置（透明层的坐标） */
+    private float scrimX, scrimY;
     /** 每次打开、收起卡片加一；后台请求回来时对不上就丢掉 */
     private int generation;
 
@@ -134,7 +137,11 @@ public class MainActivity extends Activity {
         findViewById(R.id.home).setOnClickListener(v -> web.loadUrl(Youtube.HOME));
         findViewById(R.id.vocab).setOnClickListener(v -> startActivity(new Intent(this, VocabActivity.class)));
         findViewById(R.id.settings).setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
-        scrim.setOnClickListener(v -> dismissCard());
+        scrim.setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) { scrimX = e.getX(); scrimY = e.getY(); }
+            return false;
+        });
+        scrim.setOnClickListener(v -> tapScrim());
         addButton.setOnClickListener(v -> toggleVocab());
         translateButton.setOnClickListener(v -> translateSentence());
         findViewById(R.id.speak).setOnClickListener(v -> speak());
@@ -231,6 +238,11 @@ public class MainActivity extends Activity {
     // ---- 释义卡片 ----
 
     private void showCard(Lookup l) {
+        // 换了一个词：上一个词释义没生成完但点过「加入生词本」，存下已有的部分
+        if (current != null && current.pendingAdd) {
+            current.pendingAdd = false;
+            addToVocab(current);
+        }
         generation++;
         current = l;
         wordView.setText(l.passage ? "翻译" : l.word);
@@ -396,6 +408,21 @@ public class MainActivity extends Activity {
         tts.speak(l.word, TextToSpeech.QUEUE_FLUSH, null, "word");
     }
 
+    /** 释义开着时点了别处：点在字幕的另一个词上就查那个词（网页里调 lookup，视频保持暂停），否则收起 */
+    private void tapScrim() {
+        View page = customView != null ? fullscreen : web;
+        int[] pageLoc = new int[2], scrimLoc = new int[2];
+        page.getLocationInWindow(pageLoc);
+        scrim.getLocationInWindow(scrimLoc);
+        float fx = (scrimLoc[0] + scrimX - pageLoc[0]) / page.getWidth();
+        float fy = (scrimLoc[1] + scrimY - pageLoc[1]) / page.getHeight();
+        if (fx < 0 || fx > 1 || fy < 0 || fy > 1) { dismissCard(); return; }
+        web.evaluateJavascript(String.format(Locale.US,
+                "!!(window.__subwordTap && window.__subwordTap(%f, %f))", fx, fy), value -> {
+            if (!"true".equals(value)) dismissCard();
+        });
+    }
+
     private void dismissCard() {
         if (card.getVisibility() != View.VISIBLE) return;
         generation++;
@@ -514,6 +541,9 @@ public class MainActivity extends Activity {
         if (c != null) c.show(WindowInsets.Type.systemBars());
         root.setFitsSystemWindows(true);
         root.requestApplyInsets();
+        // 横屏全屏时 WebView 拿到了摄像头挖孔那一侧的边距，网页按它在左边留出安全区（safe-area-inset-left）。
+        // 退出全屏后根布局把边距吃掉、不再往下传，这个值就一直留着，YouTube 左边空着一条。给它一份空的边距清掉
+        web.dispatchApplyWindowInsets(WindowInsets.CONSUMED);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
     }
 

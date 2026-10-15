@@ -30,18 +30,48 @@
     return clean(parts.join(' '));
   }
 
-  setInterval(function () { remember(currentLine()); }, 200);
+  // 字幕所在的框，最近一次看到的。YouTube 重新生成字幕元素的那一下，按下去时可能正好一个词都找不到；
+  // 自动字幕是滚动的，来新的一行时整块字幕会挪几个像素，按在字幕边上也可能落空。
+  // 落在刚才的字幕框或现在的字幕窗口附近（放宽 NEAR）就先截下来，抬起手指时在放宽的范围里找最近的词
+  var capBox = null;
+  function rememberBox() {
+    var segs = document.querySelectorAll(SEGMENT), b = null;
+    for (var i = 0; i < segs.length; i++) {
+      var r = segs[i].getBoundingClientRect();
+      if (!r.width) continue;
+      b = b ? { left: Math.min(b.left, r.left), top: Math.min(b.top, r.top), right: Math.max(b.right, r.right), bottom: Math.max(b.bottom, r.bottom) }
+            : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    }
+    if (b) { b.t = Date.now(); capBox = b; }
+  }
+  var NEAR = 16;
+  function inBox(b, x, y, pad) {
+    return x >= b.left - pad && x <= b.right + pad && y >= b.top - pad && y <= b.bottom + pad;
+  }
+  function nearCaption(x, y) {
+    if (capBox && Date.now() - capBox.t < 1000 && inBox(capBox, x, y, NEAR)) return true;
+    var wins = document.querySelectorAll('.caption-window');
+    for (var i = 0; i < wins.length; i++) {
+      var r = wins[i].getBoundingClientRect();
+      if (r.width && inBox(r, x, y, NEAR)) return true;
+    }
+    return false;
+  }
+
+  setInterval(function () { remember(currentLine()); rememberBox(); }, 200);
+
+  var PAD = 8;
 
   // 手指落在字幕的哪个词上。YouTube 每隔几百毫秒就把字幕元素整个重新生成一遍（全屏时暂停着也会），
   // 所以不改字幕的结构，按下时现算每个词的位置。落在字幕框里但在两个词之间时，取最近的词；
   // 落在字幕框外返回 null
   var WORD = /[A-Za-z0-9][A-Za-z0-9'’\-]*/g;
-  var PAD = 8;
-  function wordAt(x, y) {
+  function wordAt(x, y, pad) {
+    if (pad === undefined) pad = PAD;
     var segs = document.querySelectorAll(SEGMENT), best = null, bestDist = Infinity;
     for (var i = 0; i < segs.length; i++) {
       var box = segs[i].getBoundingClientRect();
-      if (!box.width || x < box.left - PAD || x > box.right + PAD || y < box.top - PAD || y > box.bottom + PAD) continue;
+      if (!box.width || !inBox(box, x, y, pad)) continue;
       var walker = document.createTreeWalker(segs[i], NodeFilter.SHOW_TEXT), node;
       while ((node = walker.nextNode())) {
         var m;
@@ -71,43 +101,173 @@
     return { x: t.clientX, y: t.clientY };
   }
 
-  // 点到字幕：在 window 的捕获阶段截下整个手势，播放器收不到，不会拖进度条、显示控制条或暂停。
+  // 全屏时控制条没出来：单指点画面不传给播放器（不会点出进度条），两指同时点一下才调出控制条。
+  // 控制条出来以后照常点（暂停、拖进度条、退出全屏）。手机版播放器显示控制条时控制层带 fadein；
+  // 认不出来时，两指调出后的几秒内也放行
+  var passUntil = 0;
+  function overlayShown() {
+    var o = document.querySelector('#player-control-overlay');
+    return !!(o && o.classList.contains('fadein'));
+  }
+  function controlsShown() {
+    return Date.now() < passUntil || overlayShown();
+  }
+  function blockTaps() {
+    return !!document.fullscreenElement && !controlsShown();
+  }
+
+  // 这一下按下要不要截下来：落在字幕的词上（w 是那个词）；落在刚才字幕的位置上，但字幕正在重新生成
+  // （cap，抬起时再找词）；或者全屏时控制条没出来
+  function decide(x, y) {
+    var w = wordAt(x, y);
+    if (w) return { w: w, x: x, y: y };
+    if (nearCaption(x, y)) return { w: null, cap: true, x: x, y: y };
+    if (blockTaps()) return { w: null, x: x, y: y };
+    return null;
+  }
+
+  // 照真的点一下的顺序把事件发给 el，播放器当成在 (x, y) 点了一下：控制条没出来时调出，出来了就收起
+  var passing = false;
+  function tapPlayer(el, x, y) {
+    var opt = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'touch', isPrimary: true };
+    function touch(type) {
+      var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+      return new TouchEvent(type, { bubbles: true, cancelable: true, view: window,
+        touches: type === 'touchstart' ? [t] : [], targetTouches: type === 'touchstart' ? [t] : [], changedTouches: [t] });
+    }
+    passing = true;
+    try {
+      el.dispatchEvent(new PointerEvent('pointerdown', opt));
+      el.dispatchEvent(touch('touchstart'));
+      el.dispatchEvent(new PointerEvent('pointerup', opt));
+      el.dispatchEvent(touch('touchend'));
+      el.dispatchEvent(new MouseEvent('mousedown', opt));
+      el.dispatchEvent(new MouseEvent('mouseup', opt));
+      el.dispatchEvent(new MouseEvent('click', opt));
+    } finally {
+      passing = false;
+    }
+  }
+
+  // 两指点一下：点两指中间，调出控制条。这个视频还没点过播放器时控制层还没生成，第一下只生成控制层，
+  // 控制条不出来，再点一下
+  function showControls(x, y) {
+    passUntil = Date.now() + 4000;
+    var built = !!document.querySelector('#player-control-overlay');
+    var el = document.elementFromPoint(x, y);
+    if (el) tapPlayer(el, x, y);
+    if (built) return;
+    setTimeout(function () {
+      if (overlayShown()) return;
+      var again = document.elementFromPoint(x, y);
+      if (again) tapPlayer(again, x, y);
+    }, 300);
+  }
+
+  // 收起释义、接着播放时，播放器一开始播放就把控制条亮出来。全屏时先把控制层整个设成透明，看不到闪一下；
+  // 刚亮出来的头几十毫秒播放器不理点击，等 400ms 再点一下空白处真的收起，收起后去掉透明
+  function hideControlsSoon() {
+    var veil = document.createElement('style');
+    // 播放器给控制条的淡入用了过渡动画，过渡比 !important 还优先，一起关掉
+    veil.textContent = '#player-control-overlay, #player-control-overlay * { opacity: 0 !important; transition: none !important; animation: none !important; }';
+    (document.head || document.documentElement).appendChild(veil);
+    var start = Date.now(), tapped = false;
+    var timer = setInterval(function () {
+      var age = Date.now() - start, shown = overlayShown();
+      if ((!shown && (tapped || age > 1500)) || age > 3000) {
+        clearInterval(timer);
+        veil.remove();
+        return;
+      }
+      if (!shown || tapped || age < 400) return;
+      tapped = true;
+      var bg = document.querySelector('#player-control-overlay .player-controls-background');
+      if (!bg) return;
+      var r = bg.getBoundingClientRect();
+      // 左上的空白处，避开中间的播放键和底下的进度条
+      tapPlayer(bg, r.left + r.width * 0.25, r.top + r.height * 0.3);
+    }, 100);
+  }
+
+  // 截下的手势：在 window 的捕获阶段截下整个手势，播放器收不到，不会拖进度条、显示控制条或暂停。
   // 手机版播放器的控制层盖在字幕上面，所以按坐标判断，不看点到的是哪个元素
-  var start = null, lastLookup = 0;
+  var g = null, lastLookup = 0;
+  function swallow(e) {
+    e.stopImmediatePropagation();
+    if (e.cancelable) e.preventDefault();   // 不再生成 click，播放器不会再收到一次
+  }
 
   window.addEventListener('touchstart', function (e) {
-    start = null;
-    if (e.touches.length !== 1) return;
-    var p = point(e), w = wordAt(p.x, p.y);
-    if (!w) return;
-    start = { w: w, x: p.x, y: p.y };
-    e.stopImmediatePropagation();
-    if (e.cancelable) e.preventDefault();
+    if (passing) return;
+    if (e.touches.length === 1) {
+      var p = point(e);
+      g = decide(p.x, p.y);
+      if (g) g.t = Date.now();
+    } else if (g && !g.two) {
+      // 第二个手指跟着按下来：两指点
+      var a = e.touches[0], b = e.touches[1];
+      g.two = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+      g.t = Date.now();
+    }
+    if (g) swallow(e);
   }, { capture: true, passive: false });
 
-  ['touchmove', 'touchend', 'touchcancel'].forEach(function (type) {
-    window.addEventListener(type, function (e) {
-      if (!start) return;
-      e.stopImmediatePropagation();
-      if (e.cancelable) e.preventDefault();   // 不再生成 click，播放器不会再收到一次
-      if (type !== 'touchend') { if (type === 'touchcancel') start = null; return; }
-      var p = point(e), s = start;
-      start = null;
-      if (Math.abs(p.x - s.x) < 16 && Math.abs(p.y - s.y) < 16) lookup(s.w);
-    }, { capture: true, passive: false });
-  });
+  window.addEventListener('touchmove', function (e) {
+    if (passing || !g) return;
+    swallow(e);
+    // 一指：离按下的地方超过 16px 算拖动；两指：两指中点挪开超过 24px（捏合、滑动）不算点
+    if (g.two) {
+      if (e.touches.length < 2) return;
+      var a = e.touches[0], b = e.touches[1];
+      var mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+      if (Math.abs(mx - g.two.x) >= 24 || Math.abs(my - g.two.y) >= 24) g.moved = true;
+    } else {
+      var p = point(e);
+      if (Math.abs(p.x - g.x) >= 16 || Math.abs(p.y - g.y) >= 16) g.moved = true;
+    }
+  }, { capture: true, passive: false });
+
+  window.addEventListener('touchend', function (e) {
+    if (passing || !g) return;
+    swallow(e);
+    if (e.touches.length > 0) return;   // 等手指都抬起来
+    var s = g;
+    g = null;
+    if (s.two) {
+      if (!s.moved && Date.now() - s.t < 500) showControls(s.two.x, s.two.y);
+    } else if (!s.moved) {
+      var w = s.w || (s.cap && wordAt(s.x, s.y, NEAR));
+      if (w) lookup(w);
+    }
+  }, { capture: true, passive: false });
+
+  window.addEventListener('touchcancel', function (e) {
+    if (passing || !g) return;
+    swallow(e);
+    if (e.touches.length === 0) g = null;
+  }, { capture: true, passive: false });
 
   ['pointerdown', 'pointermove', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick'].forEach(function (type) {
     window.addEventListener(type, function (e) {
-      // 触摸时 touchstart 已经认出了词（pointerdown 比 touchstart 先到，也按坐标判断）；
+      if (passing) return;
+      // 触摸时 pointerdown 比 touchstart 先到，也按坐标判断；
       // 鼠标或触控笔没有 touch 事件，在 click 时查词
-      var w = start ? start.w : wordAt(e.clientX, e.clientY);
-      if (!w) return;
+      var hit = g || decide(e.clientX, e.clientY);
+      if (!hit) return;
       e.stopImmediatePropagation();
       if (e.cancelable && type !== 'pointerdown' && type !== 'pointermove') e.preventDefault();
-      if (type === 'click' && !start && Date.now() - lastLookup > 600) lookup(w);
+      if (type === 'click' && !g && hit.w && Date.now() - lastLookup > 600) lookup(hit.w);
     }, { capture: true, passive: false });
   });
+
+  // 释义开着时 App 盖了一层透明层，点在上面先问这里：落在字幕的词上就查这个词（视频保持暂停），
+  // 返回 true；不在词上返回 false，App 收起释义。坐标是占网页宽高的比例
+  window.__subwordTap = function (fx, fy) {
+    var w = wordAt(fx * window.innerWidth, fy * window.innerHeight);
+    if (!w) return false;
+    lookup(w);
+    return true;
+  };
 
   // 高亮：叠在词上的半透明黄框，字幕元素被重新生成也不会丢。全屏时要放进全屏的元素里才看得到
   var mark = null;
@@ -125,9 +285,12 @@
   }
 
   var resumeVideo = null;
+  /** 点词前（释义还没开着时）控制条是不是开着：开着就不替用户收起 */
+  var looking = false, hadControls = false;
 
   function lookup(w) {
     lastLookup = Date.now();
+    if (!looking) { looking = true; hadControls = overlayShown(); }
     var video = document.querySelector('video');
     if (!resumeVideo && video && !video.paused) resumeVideo = video;
     if (video) video.pause();
@@ -155,10 +318,20 @@
   // App 收起释义后调用：去掉高亮；点词前在播放的，接着播放
   window.__subwordResume = function () {
     unhighlight();
+    looking = false;
     var v = resumeVideo;
     resumeVideo = null;
-    if (v) v.play();
+    if (!v) return;
+    v.play();
+    if (document.fullscreenElement && !hadControls) hideControlsSoon();
   };
+
+  // 评论：整条评论包在一个按钮里（预览卡片也是），点一下、长按时整条盖上一层半透明蓝色，像是整条被选中了。
+  // 去掉这层点按高亮，长按照常只选中手指下的词
+  var css = document.createElement('style');
+  css.textContent = 'ytm-comment-thread-renderer, ytm-comment-thread-renderer *, yt-video-metadata-carousel-view-model,' +
+    'yt-video-metadata-carousel-view-model * { -webkit-tap-highlight-color: transparent !important; }';
+  (document.head || document.documentElement).appendChild(css);
 
   // 长按选中的文字（简介、评论）：选中的文字、所在段落、位置（视口坐标，CSS 像素）
   window.__subwordSelection = function () {
