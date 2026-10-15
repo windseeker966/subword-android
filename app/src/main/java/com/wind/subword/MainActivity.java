@@ -16,6 +16,7 @@ import android.speech.tts.TextToSpeech;
 import android.view.ActionMode;
 import android.view.Gravity;
 import android.view.Menu;
+import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
@@ -494,7 +495,10 @@ public class MainActivity extends Activity {
         super.onActionModeStarted(mode);
         if (mode.getType() != ActionMode.TYPE_FLOATING) return;
         Menu menu = mode.getMenu();
-        menu.add(Menu.NONE, View.generateViewId(), 0, "AI 查词").setOnMenuItemClickListener(item -> {
+        // 悬浮菜单先排「总是显示」的项（复制、全选等），再排其他的；也设成总是显示、序号 0，排到复制前面
+        MenuItem ai = menu.add(Menu.NONE, View.generateViewId(), 0, "AI 查词");
+        ai.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        ai.setOnMenuItemClickListener(item -> {
             web.evaluateJavascript("window.__subwordSelection && window.__subwordSelection()", value -> {
                 try {
                     if (value == null || value.equals("null")) return;

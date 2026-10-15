@@ -116,9 +116,22 @@
     return !!document.fullscreenElement && !controlsShown();
   }
 
+  // 控制条亮着时按在按钮、进度条、时间上：小屏时字幕正好压在全屏按钮和进度条上，这时让给控制条
+  var CONTROL = 'button, [role=button], [role=slider], yt-progress-bar, player-time-display';
+  function onControl(x, y) {
+    if (!overlayShown()) return false;
+    var els = document.elementsFromPoint(x, y);
+    for (var i = 0; i < els.length; i++) {
+      var c = els[i].closest(CONTROL);
+      if (c && c.closest('#player-control-overlay')) return true;
+    }
+    return false;
+  }
+
   // 这一下按下要不要截下来：落在字幕的词上（w 是那个词）；落在刚才字幕的位置上，但字幕正在重新生成
-  // （cap，抬起时再找词）；或者全屏时控制条没出来
+  // （cap，抬起时再找词）；或者全屏时控制条没出来。控制条亮着时按在控制上的不截
   function decide(x, y) {
+    if (onControl(x, y)) return null;
     var w = wordAt(x, y);
     if (w) return { w: w, x: x, y: y };
     if (nearCaption(x, y)) return { w: null, cap: true, x: x, y: y };
