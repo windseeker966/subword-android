@@ -499,7 +499,9 @@ public class MainActivity extends Activity {
         MenuItem ai = menu.add(Menu.NONE, View.generateViewId(), 0, "AI 查词");
         ai.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         ai.setOnMenuItemClickListener(item -> {
+            // 关菜单时 WebView 会清掉选区，清选区可能比取选中文字先到网页，取到空的：拿到文字后再关
             web.evaluateJavascript("window.__subwordSelection && window.__subwordSelection()", value -> {
+                mode.finish();
                 try {
                     if (value == null || value.equals("null")) return;
                     String json = new JSONArray("[" + value + "]").getString(0);
@@ -508,7 +510,6 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {
                 }
             });
-            mode.finish();
             return true;
         });
     }

@@ -347,7 +347,7 @@
   (document.head || document.documentElement).appendChild(css);
 
   // 长按选中的文字（简介、评论）：选中的文字、所在段落、位置（视口坐标，CSS 像素）
-  window.__subwordSelection = function () {
+  function selectionNow() {
     var sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return null;
     var text = clean(sel.toString());
@@ -359,11 +359,27 @@
     var block = el ? clean(el.textContent) : text;
     if (block.length > 1200) block = text;
     var b = r.getBoundingClientRect();
+    return { text: text, block: block, rect: { left: b.left, top: b.top, width: b.width, height: b.height }, t: Date.now() };
+  }
+  // 最近一次选中的内容：点菜单时选区可能已经被清掉了（评论列表重新渲染、关菜单），用刚才记下的
+  var lastSelection = null;
+  document.addEventListener('selectionchange', function () {
+    var s = selectionNow();
+    if (s) lastSelection = s;
+  });
+
+  window.__subwordSelection = function () {
+    var s = selectionNow();
+    if (!s && lastSelection && Date.now() - lastSelection.t < 30000) s = lastSelection;
+    lastSelection = null;
+    if (!s) return null;
     var video = document.querySelector('video');
     if (!resumeVideo && video && !video.paused) { resumeVideo = video; video.pause(); }
-    sel.removeAllRanges();
+    var sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+    var b = s.rect;
     return JSON.stringify({
-      word: text, sentence: block, previous: '',
+      word: s.text, sentence: s.block, previous: '',
       time: video ? Math.floor(video.currentTime) : 0,
       title: document.title.replace(/ - YouTube$/, ''), url: location.href,
       x: b.left, y: b.top, w: b.width, h: b.height,
