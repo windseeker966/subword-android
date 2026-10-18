@@ -15,6 +15,7 @@ import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.view.ActionMode;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -74,8 +75,6 @@ public class MainActivity extends Activity {
 
     /** 卡片上显示的这次查词 */
     private Lookup current;
-    /** 透明层上按下的位置（透明层的坐标） */
-    private float scrimX, scrimY;
     /** 每次打开、收起卡片加一；后台请求回来时对不上就丢掉 */
     private int generation;
 
@@ -138,11 +137,7 @@ public class MainActivity extends Activity {
         findViewById(R.id.home).setOnClickListener(v -> web.loadUrl(Youtube.HOME));
         findViewById(R.id.vocab).setOnClickListener(v -> startActivity(new Intent(this, VocabActivity.class)));
         findViewById(R.id.settings).setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
-        scrim.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_DOWN) { scrimX = e.getX(); scrimY = e.getY(); }
-            return false;
-        });
-        scrim.setOnClickListener(v -> tapScrim());
+        scrim.setOnTouchListener((v, e) -> { pressScrim(e); return true; });
         addButton.setOnClickListener(v -> toggleVocab());
         translateButton.setOnClickListener(v -> translateSentence());
         findViewById(R.id.speak).setOnClickListener(v -> speak());
@@ -233,6 +228,12 @@ public class MainActivity extends Activity {
                 if (!l.word.isEmpty()) main.post(() -> showCard(l));
             } catch (Exception ignored) {
             }
+        }
+
+        /** 按住字幕里的词开始划词：震一下 */
+        @JavascriptInterface
+        public void selecting() {
+            main.post(() -> root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS));
         }
     }
 
@@ -409,18 +410,28 @@ public class MainActivity extends Activity {
         tts.speak(l.word, TextToSpeech.QUEUE_FLUSH, null, "word");
     }
 
-    /** 释义开着时点了别处：点在字幕的另一个词上就查那个词（网页里调 lookup，视频保持暂停），否则收起 */
-    private void tapScrim() {
+    /**
+     * 释义开着时透明层上的一指手势转给网页，和直接按在网页上一样：点字幕里的另一个词就查那个词，按住拖动就查划的几个词
+     * （网页里调 lookup，视频保持暂停）；抬手时网页没查词就收起
+     */
+    private void pressScrim(MotionEvent e) {
+        String phase;
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN: phase = "down"; break;
+            case MotionEvent.ACTION_MOVE: phase = "move"; break;
+            case MotionEvent.ACTION_UP: phase = "up"; break;
+            case MotionEvent.ACTION_CANCEL: phase = "cancel"; break;
+            default: return;
+        }
         View page = customView != null ? fullscreen : web;
         int[] pageLoc = new int[2], scrimLoc = new int[2];
         page.getLocationInWindow(pageLoc);
         scrim.getLocationInWindow(scrimLoc);
-        float fx = (scrimLoc[0] + scrimX - pageLoc[0]) / page.getWidth();
-        float fy = (scrimLoc[1] + scrimY - pageLoc[1]) / page.getHeight();
-        if (fx < 0 || fx > 1 || fy < 0 || fy > 1) { dismissCard(); return; }
+        float fx = (scrimLoc[0] + e.getX() - pageLoc[0]) / page.getWidth();
+        float fy = (scrimLoc[1] + e.getY() - pageLoc[1]) / page.getHeight();
         web.evaluateJavascript(String.format(Locale.US,
-                "!!(window.__subwordTap && window.__subwordTap(%f, %f))", fx, fy), value -> {
-            if (!"true".equals(value)) dismissCard();
+                "!!(window.__subwordPress && window.__subwordPress('%s', %f, %f))", phase, fx, fy), value -> {
+            if (phase.equals("up") && !"true".equals(value)) dismissCard();
         });
     }
 

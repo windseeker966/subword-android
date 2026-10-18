@@ -113,7 +113,7 @@
                 android:id="@+id/word"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:maxLines="1"
+                android:maxLines="2"
                 android:ellipsize="end"
                 android:maxWidth="150dp"
                 android:textSize="18sp"
