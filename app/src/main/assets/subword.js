@@ -143,7 +143,8 @@
     return { x: t.clientX, y: t.clientY };
   }
 
-  // 全屏时控制条没出来：单指点画面不传给播放器（不会点出进度条），两指同时点一下才调出控制条。
+  // 全屏时控制条没出来：单指点画面不传给播放器（不会点出进度条），两指同时点一下才调出控制条；
+  // 双击快进倒退、按住 2 倍速照常用（见 pressScreen）。
   // 控制条出来以后照常点（暂停、拖进度条、退出全屏）。手机版播放器显示控制条时控制层带 fadein；
   // 认不出来时，两指调出后的几秒内也放行
   var passUntil = 0;
@@ -171,37 +172,74 @@
   }
 
   // 这一下按下要不要截下来：落在字幕的词上（w 是那个词）；落在刚才字幕的位置上，但字幕正在重新生成
-  // （cap，抬起时再找词）；或者全屏时控制条没出来。控制条亮着时按在控制上的不截
+  // （cap，抬起时再找词）；或者全屏时控制条没出来，落在画面上（screen）。控制条亮着时按在控制上的不截
   function decide(x, y) {
     if (onControl(x, y)) return null;
     var w = wordAt(x, y);
     if (w) return { w: w, x: x, y: y };
     if (nearCaption(x, y)) return { w: null, cap: true, x: x, y: y };
-    if (blockTaps()) return { w: null, x: x, y: y };
+    if (blockTaps()) return { w: null, screen: true, x: x, y: y };
     return null;
   }
 
-  // 照真的点一下的顺序把事件发给 el，播放器当成在 (x, y) 点了一下：控制条没出来时调出，出来了就收起
+  // 照真的手势的顺序把事件发给 el，播放器当成在 (x, y) 按下（down）、抬起（up）、取消（cancel），
+  // click 是抬起后的 mousedown、mouseup、click
   var passing = false;
-  function tapPlayer(el, x, y) {
+  function firePlayer(el, x, y, steps) {
     var opt = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, pointerId: 1, pointerType: 'touch', isPrimary: true };
     function touch(type) {
       var t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
-      return new TouchEvent(type, { bubbles: true, cancelable: true, view: window,
-        touches: type === 'touchstart' ? [t] : [], targetTouches: type === 'touchstart' ? [t] : [], changedTouches: [t] });
+      var on = type === 'touchstart' ? [t] : [];
+      return new TouchEvent(type, { bubbles: true, cancelable: true, view: window, touches: on, targetTouches: on, changedTouches: [t] });
     }
     passing = true;
     try {
-      el.dispatchEvent(new PointerEvent('pointerdown', opt));
-      el.dispatchEvent(touch('touchstart'));
-      el.dispatchEvent(new PointerEvent('pointerup', opt));
-      el.dispatchEvent(touch('touchend'));
-      el.dispatchEvent(new MouseEvent('mousedown', opt));
-      el.dispatchEvent(new MouseEvent('mouseup', opt));
-      el.dispatchEvent(new MouseEvent('click', opt));
+      steps.forEach(function (step) {
+        if (step === 'down') { el.dispatchEvent(new PointerEvent('pointerdown', opt)); el.dispatchEvent(touch('touchstart')); }
+        if (step === 'up') { el.dispatchEvent(new PointerEvent('pointerup', opt)); el.dispatchEvent(touch('touchend')); }
+        if (step === 'cancel') { el.dispatchEvent(new PointerEvent('pointercancel', opt)); el.dispatchEvent(touch('touchcancel')); }
+        if (step === 'click') ['mousedown', 'mouseup', 'click'].forEach(function (type) { el.dispatchEvent(new MouseEvent(type, opt)); });
+      });
     } finally {
       passing = false;
     }
+  }
+
+  // 播放器当成在 (x, y) 点了一下：控制条没出来时调出，出来了就收起
+  function tapPlayer(el, x, y) {
+    firePlayer(el, x, y, ['down', 'up', 'click']);
+  }
+
+  // 全屏时控制条没出来，单指按在画面上：真的手势照样截下，照着它给播放器发合成的事件。
+  // 按下时给播放器发按下，按住 500ms 播放器自己变 2 倍速；抬手时发取消：播放器不当成点了一下（不调出控制条），
+  // 2 倍速也停下。上一下点完不到 DOUBLE 毫秒、在差不多的地方又按下：给播放器连着点两下，播放器当成双击，
+  // 倒退或快进 10 秒（之后控制层亮着，再点照常传给播放器，接着快进）
+  var DOUBLE = 300, lastTap = null;
+  function pressScreen(s) {
+    var last = lastTap, el = document.elementFromPoint(s.x, s.y);
+    lastTap = null;
+    if (!el) return;
+    if (last && s.t - last.t < DOUBLE && Math.abs(s.x - last.x) < 48 && Math.abs(s.y - last.y) < 48) {
+      tapPlayer(el, last.x, last.y);
+      tapPlayer(el, s.x, s.y);
+      s.doubled = true;
+      return;
+    }
+    s.player = el;
+    firePlayer(el, s.x, s.y, ['down']);
+  }
+
+  // 画面上的手势结束：给播放器发取消。lifted 是手指抬起来了（不是第二个手指按下、被系统打断），
+  // 没拖动、按得不久就记下这一下，下一下跟着按下来算双击
+  function leaveScreen(s, lifted) {
+    if (s.player) {
+      // 按下时手指下的元素被播放器换掉了：发给现在那里的元素，免得播放器一直 2 倍速
+      var el = s.player.isConnected ? s.player : document.elementFromPoint(s.x, s.y);
+      if (el) firePlayer(el, s.x, s.y, ['cancel']);
+      s.player = null;
+    }
+    var now = Date.now();
+    lastTap = lifted && !s.doubled && !s.moved && now - s.t < DOUBLE ? { x: s.x, y: s.y, t: now } : null;
   }
 
   // 两指点一下：点两指中间，调出控制条。这个视频还没点过播放器时控制层还没生成，第一下只生成控制层，
@@ -312,6 +350,7 @@
       if (g) {
         g.t = Date.now();
         if (g.w || g.cap) holdLater(g);
+        else if (g.screen) pressScreen(g);
         // 后面的 touchmove、touchend 都发给按下时手指下的元素。控制层还没生成时那就是字幕本身，
         // 播放时 YouTube 一会儿就把它换掉，换掉后事件传不到 window，抬手就丢了（按住划词时几乎必丢）。
         // 在它身上也听着：它还在网页里时 window 先截下、到不了它；同一个函数重复添加只算一次
@@ -320,6 +359,7 @@
     } else if (g && !g.two && !g.sel) {
       // 第二个手指跟着按下来：两指点
       clearTimeout(g.timer);
+      if (g.screen) leaveScreen(g, false);
       var a = e.touches[0], b = e.touches[1];
       g.two = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
       g.t = Date.now();
@@ -339,6 +379,7 @@
     } else {
       var p = point(e);
       dragTo(g, p.x, p.y);
+      if (g.screen && g.moved && g.player) leaveScreen(g, false);   // 在画面上滑：播放器那边不再按着，不会变 2 倍速
     }
   }
 
@@ -350,6 +391,8 @@
     g = null;
     if (s.two) {
       if (!s.moved && Date.now() - s.t < 500) showControls(s.two.x, s.two.y);
+    } else if (s.screen) {
+      leaveScreen(s, true);
     } else {
       release(s);
     }
@@ -359,7 +402,8 @@
     if (passing || !g) return;
     swallow(e);
     if (e.touches.length > 0) return;
-    abort(g, false);
+    if (g.screen) leaveScreen(g, false);
+    else abort(g, false);
     g = null;
   }
 
